@@ -363,6 +363,13 @@ public enum Controller {
         }
         properties.setNumberOfThreads((Integer) gui.getSpinnerThreadsNumber().getValue());
 
+        // M constant for statistics
+        try {
+            gui.getSpinnerThreadsNumber().commitEdit();
+        } catch (java.text.ParseException e) {
+        }
+        properties.setNumberOfThreads((Integer) gui.getSpinnerThreadsNumber().getValue());
+
     }
 
     public void onVisualizationWindowClosed() {

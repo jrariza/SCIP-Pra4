@@ -31,6 +31,8 @@ public class SimulationProperties {
     private boolean mergeOnCollision = true;
     private Number coefficientOfRestitution;
 
+    private int MforStats = 25;
+
     /* Java {@link ArrayList} is limited to Integer.MAX_VALUE */
     private int numberOfObjects;
 

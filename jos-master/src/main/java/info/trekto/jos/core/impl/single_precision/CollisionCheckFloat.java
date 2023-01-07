@@ -3,6 +3,10 @@ package info.trekto.jos.core.impl.single_precision;
 import com.aparapi.Kernel;
 
 import java.util.Arrays;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.locks.Condition;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
 
 import static java.lang.System.exit;
 
@@ -15,6 +19,11 @@ public class CollisionCheckFloat extends Kernel {
     public final float[] radius;
     public final boolean[] deleted;
 
+    public Semaphore collisionsSem;
+    public int finishedThreads;
+    public Lock lock;
+    public Condition finishedCollisions;
+
     public CollisionCheckFloat(int n, float[] positionX, float[] positionY, float[] radius, boolean[] deleted) {
         this.n = n;
         collisions = new boolean[n];
@@ -23,6 +32,11 @@ public class CollisionCheckFloat extends Kernel {
         this.positionY = positionY;
         this.radius = radius;
         this.deleted = deleted;
+
+        collisionsSem = new Semaphore(0);
+        finishedThreads = 0;
+        lock = new ReentrantLock();
+        finishedCollisions = lock.newCondition();
     }
 
     public void prepare() {
@@ -86,32 +100,21 @@ public class CollisionCheckFloat extends Kernel {
     }
 
     public void checkAllCollisionsThreads(int MThreads) {
-        int particles = positionX.length;
-        Thread[] threads = new Thread[MThreads];
-        CheckAllCollisionsRunFloat[] runnables = new CheckAllCollisionsRunFloat[MThreads];
-        int remainingThreads = MThreads, work = particles, currentJob, firstNonAssigned = 0;
+        System.out.println("main2");
+        // Notify threads to start checkCollisions
+        collisionsSem.release(MThreads);
 
-        for (int i = 0; i < MThreads; i++) {
-            currentJob = work / remainingThreads;
-            int first = firstNonAssigned, last = firstNonAssigned + currentJob;
-
-            runnables[i] = new CheckAllCollisionsRunFloat(this, first, last);
-            threads[i] = new Thread(runnables[i]);
-            threads[i].start();
-
-            work -= currentJob;
-            remainingThreads--;
-            firstNonAssigned += currentJob;
+        // Wait for all threads to finish
+        lock.lock();
+        System.out.println("main in lock");
+        try {
+            if (finishedThreads < MThreads)
+                finishedCollisions.await();
+        } catch (InterruptedException e) {
+        } finally {
+            lock.unlock();
         }
-
-        for (int i = 0; i < MThreads; i++) {
-            try {
-                threads[i].join();
-            } catch (InterruptedException e) {
-                for (int j = 0; j < MThreads; j++) runnables[j].cancel();
-                exit(-1);
-            }
-        }
+        finishedThreads = 0;
     }
 
     public void checkCollisions(int i) {

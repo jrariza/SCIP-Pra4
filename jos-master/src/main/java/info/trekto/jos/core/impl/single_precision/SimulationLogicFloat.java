@@ -11,9 +11,9 @@ import java.util.AbstractMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.Semaphore;
 
 import static info.trekto.jos.core.numbers.NumberFactoryProxy.ZERO;
-import static java.lang.System.exit;
 
 public class SimulationLogicFloat extends Kernel implements SimulationLogic {
     private static final float TWO = 2.0f;
@@ -50,6 +50,9 @@ public class SimulationLogicFloat extends Kernel implements SimulationLogic {
     private final boolean mergeOnCollision;
     private final float coefficientOfRestitution;
 
+    public Semaphore calcValuesSem;
+    public int finishedThreads;
+
     public SimulationLogicFloat(int numberOfObjects, float secondsPerIteration, int screenWidth, int screenHeight, boolean mergeOnCollision,
                                 float coefficientOfRestitution) {
 
@@ -83,12 +86,16 @@ public class SimulationLogicFloat extends Kernel implements SimulationLogic {
         this.screenHeight = screenHeight;
         this.mergeOnCollision = mergeOnCollision;
         this.coefficientOfRestitution = coefficientOfRestitution;
+
+        this.calcValuesSem = new Semaphore(0);
+        this.finishedThreads = 0;
     }
 
     @Override
     public void run() {
         calculateNewValues(getGlobalId());
     }
+
 
     /**
      * !!! DO NOT CHANGE THIS METHOD, run() method and methods called from them if you don't have experience with Aparapi library!!!
@@ -155,52 +162,22 @@ public class SimulationLogicFloat extends Kernel implements SimulationLogic {
     }
 
     public void calculateAllNewValuesThreads(int MThreads) {
-        int particles = positionX.length;
-        Thread[] threads = new Thread[MThreads];
-        CalculateAllNewValuesRunFloat[] runnables = new CalculateAllNewValuesRunFloat[MThreads];
-        int remainingThreads = MThreads, work = particles, currentJob, firstNonAssigned = 0;
+        System.out.println("main1");
+        // Notify threads to start calculateAllNewValues
+        calcValuesSem.release(MThreads);
 
-        for (int i = 0; i < MThreads; i++) {
-            currentJob = work / remainingThreads;
-            int first = firstNonAssigned, last = firstNonAssigned + currentJob;
-
-            runnables[i] = new CalculateAllNewValuesRunFloat(this, first, last);
-            threads[i] = new Thread(runnables[i]);
-            threads[i].start();
-
-            work -= currentJob;
-            remainingThreads--;
-            firstNonAssigned += currentJob;
-        }
-
-        for (int i = 0; i < MThreads; i++) {
-            try {
-                threads[i].join();
-            } catch (InterruptedException e) {
-                for (int j = 0; j < MThreads; j++) runnables[j].cancel();
-                exit(-1);
+        // Wait for all threads to finish
+        synchronized (this) {
+            while (finishedThreads < MThreads) {
+                try {
+                    wait();
+                } catch (InterruptedException e) {
+                }
             }
         }
-    }
+        finishedThreads=0;
 
-//    public void calculateAllNewValuesThreads(int MThreads) {
-//        CalculateAllNewValuesThread[] threads = new CalculateAllNewValuesThread[MThreads];
-//        int particlesByThread = positionX.length / MThreads;
-//        int first, last;
-//        for (int i = 0; i < MThreads; i++) {
-//            first = i * particlesByThread;
-//            last = (i == MThreads - 1) ? MThreads : (i + 1) * particlesByThread;
-//            threads[i] = new CalculateAllNewValuesThread(this, first, last);
-//            threads[i].start();
-//        }
-//        for (int i = 0; i < MThreads; i++) {
-//            try {
-//                threads[i].join();
-//            } catch (InterruptedException e) {
-//                throw new RuntimeException(e);
-//            }
-//        }
-//    }
+    }
 
     private void bounceFromScreenBorders(int i) {
         if (positionX[i] + radius[i] >= screenWidth / 2.0 || positionX[i] - radius[i] <= -screenWidth / 2.0) {

@@ -14,11 +14,13 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.*;
+import java.util.concurrent.Semaphore;
 
 import static com.aparapi.Kernel.EXECUTION_MODE.GPU;
 import static info.trekto.jos.core.Controller.C;
 import static info.trekto.jos.util.Utils.*;
 import static java.lang.System.exit;
+import static java.lang.System.in;
 import static java.util.stream.IntStream.range;
 
 /**
@@ -38,6 +40,9 @@ public class SimulationFloat extends SimulationAP implements Simulation {
     private final float[] zeroArray;
     private final SimulationAP cpuSimulation;
     private boolean executingOnCpu;
+
+    private Thread[] threads;
+    private StartThreadRoutineRunFloat[] runnables;
 
     public SimulationFloat(SimulationProperties properties, SimulationAP cpuSimulation) {
         super(properties);
@@ -64,6 +69,7 @@ public class SimulationFloat extends SimulationAP implements Simulation {
 //        collisionCheckKernel.setExecutionMode(GPU);
         this.cpuSimulation = cpuSimulation;
     }
+
 
     @Override
     public void doIteration(boolean saveCurrentIterationToFile, long iterationCounter) {
@@ -107,18 +113,19 @@ public class SimulationFloat extends SimulationAP implements Simulation {
                 warn(logger, "Collision detection execution mode = " + collisionCheckKernel.getExecutionMode());
             }
         }
-
+        System.out.println("main out collisions");
         /* If collision/s exists execute sequentially on a single thread */
         if (collisionCheckKernel.collisionExists()) {
             simulationLogic.processCollisions();
         }
-
+        System.out.println("main out process");
         if (properties.isSaveToFile() && saveCurrentIterationToFile) {
             SimulationLogicFloat sl = simulationLogic;
             C.getReaderWriter().appendObjectsToFile(properties, iterationCounter, sl.positionX, sl.positionY, zeroArray, sl.velocityX, sl.velocityY,
                     zeroArray, sl.mass, sl.radius, sl.id, sl.color, sl.deleted, sl.accelerationX, sl.accelerationY,
                     zeroArray);
         }
+        System.out.println("main3");
     }
 
     public void initArrays(List<SimulationObject> initialObjects) {
@@ -139,6 +146,44 @@ public class SimulationFloat extends SimulationAP implements Simulation {
         }
     }
 
+    public void startThreadRoutine(){
+        int numThreads = properties.getNumberOfThreads();
+        long numIters = properties.getNumberOfIterations();
+        boolean isInfitineSim = properties.isInfiniteSimulation();
+        int particles = simulationLogic.positionX.length;
+
+        threads = new Thread[numThreads];
+        runnables = new StartThreadRoutineRunFloat[numThreads];
+
+        int remainingThreads = numThreads, work = particles, currentJob, firstNonAssigned = 0;
+
+        // Create threads
+        for (int i = 0; i < numThreads; i++) {
+            currentJob = work / remainingThreads;
+            int first = firstNonAssigned, last = firstNonAssigned + currentJob;
+
+            runnables[i] = new StartThreadRoutineRunFloat(numThreads, numIters, isInfitineSim, simulationLogic, collisionCheckKernel, first, last);
+            threads[i] = new Thread(runnables[i]);
+            threads[i].start();
+
+            work -= currentJob;
+            remainingThreads--;
+            firstNonAssigned += currentJob;
+        }
+    }
+
+    private void joinThreads() {
+        int numThreads = properties.getNumberOfThreads();
+        for (int i = 0; i < numThreads ; i++) {
+            try {
+                threads[i].join();
+            } catch (InterruptedException e) {
+                for (int j = 0; j < numThreads; j++) runnables[j].cancel();
+                exit(-1);
+            }
+        }
+    }
+
     @Override
     public void startSimulation() throws SimulationException {
         init();
@@ -153,6 +198,10 @@ public class SimulationFloat extends SimulationAP implements Simulation {
         C.setRunning(true);
         C.setHasToStop(false);
         try {
+            //If running on CPU and more than 1 thread, create threads
+            if (!GPU.equals(simulationLogic.getExecutionMode()) && properties.getNumberOfThreads() > 1)
+                startThreadRoutine();
+
             for (long i = 0; properties.isInfiniteSimulation() || i < properties.getNumberOfIterations(); i++) {
                 try {
                     if (C.hasToStop()) {
@@ -222,6 +271,7 @@ public class SimulationFloat extends SimulationAP implements Simulation {
             }
         }
 
+        joinThreads();
         info(logger, "End of simulation. Time: " + nanoToHumanReadable(endTime - startTime));
     }
 
