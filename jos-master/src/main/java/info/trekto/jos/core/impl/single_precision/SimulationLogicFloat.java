@@ -102,7 +102,8 @@ public class SimulationLogicFloat extends Kernel implements SimulationLogic {
      * This code is translated to OpenCL and executed on the GPU.
      * You cannot use even simple 'break' here - it is not supported by Aparapi.
      */
-    public void calculateNewValues(int i) {
+    public long calculateNewValues(int i) {
+        long evalPart = 0;
         if (!deleted[i]) {
             /* Speed is scalar, velocity is vector. Velocity = speed + direction. */
 
@@ -115,6 +116,7 @@ public class SimulationLogicFloat extends Kernel implements SimulationLogic {
             float newAccelerationX = 0;
             float newAccelerationY = 0;
             for (int j = 0; j < readOnlyPositionX.length; j++) {
+                evalPart++;
                 if (i != j && !readOnlyDeleted[j]) {
                     /* Calculate force */
                     float distance = calculateDistance(positionX[i], positionY[i], readOnlyPositionX[j], readOnlyPositionY[j]);
@@ -153,6 +155,7 @@ public class SimulationLogicFloat extends Kernel implements SimulationLogic {
                 bounceFromScreenBorders(i);
             }
         }
+        return evalPart;
     }
 
 
@@ -162,7 +165,6 @@ public class SimulationLogicFloat extends Kernel implements SimulationLogic {
     }
 
     public void calculateAllNewValuesThreads(int MThreads) {
-        System.out.println("main1");
         // Notify threads to start calculateAllNewValues
         calcValuesSem.release(MThreads);
 
@@ -174,8 +176,9 @@ public class SimulationLogicFloat extends Kernel implements SimulationLogic {
                 } catch (InterruptedException e) {
                 }
             }
+            finishedThreads = 0;
         }
-        finishedThreads=0;
+
 
     }
 

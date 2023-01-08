@@ -4,6 +4,7 @@ import com.aparapi.Range;
 import info.trekto.jos.core.Simulation;
 import info.trekto.jos.core.exceptions.SimulationException;
 import info.trekto.jos.core.impl.SimulationProperties;
+import info.trekto.jos.core.impl.Statistics;
 import info.trekto.jos.core.impl.arbitrary_precision.SimulationAP;
 import info.trekto.jos.core.model.SimulationObject;
 import info.trekto.jos.core.model.impl.SimulationObjectImpl;
@@ -20,7 +21,6 @@ import static com.aparapi.Kernel.EXECUTION_MODE.GPU;
 import static info.trekto.jos.core.Controller.C;
 import static info.trekto.jos.util.Utils.*;
 import static java.lang.System.exit;
-import static java.lang.System.in;
 import static java.util.stream.IntStream.range;
 
 /**
@@ -43,6 +43,9 @@ public class SimulationFloat extends SimulationAP implements Simulation {
 
     private Thread[] threads;
     private StartThreadRoutineRunFloat[] runnables;
+    public Statistics globalStats; // accumulated stats of all iterations of all threads
+    public Semaphore globalStatsSem = new Semaphore(0);
+    public int finishedThreads = 0;
 
     public SimulationFloat(SimulationProperties properties, SimulationAP cpuSimulation) {
         super(properties);
@@ -87,7 +90,7 @@ public class SimulationFloat extends SimulationAP implements Simulation {
         /* Execute in parallel on GPU if available */
         if (GPU.equals(simulationLogic.getExecutionMode())) {
             simulationLogic.execute(simulationLogicRange);
-        }else if (properties.getNumberOfThreads() == 1) {
+        } else if (properties.getNumberOfThreads() == 1) {
             simulationLogic.calculateAllNewValues();
         } else {
             simulationLogic.calculateAllNewValuesThreads(properties.getNumberOfThreads());
@@ -113,19 +116,45 @@ public class SimulationFloat extends SimulationAP implements Simulation {
                 warn(logger, "Collision detection execution mode = " + collisionCheckKernel.getExecutionMode());
             }
         }
-        System.out.println("main out collisions");
+
         /* If collision/s exists execute sequentially on a single thread */
         if (collisionCheckKernel.collisionExists()) {
             simulationLogic.processCollisions();
         }
-        System.out.println("main out process");
+
         if (properties.isSaveToFile() && saveCurrentIterationToFile) {
             SimulationLogicFloat sl = simulationLogic;
             C.getReaderWriter().appendObjectsToFile(properties, iterationCounter, sl.positionX, sl.positionY, zeroArray, sl.velocityX, sl.velocityY,
                     zeroArray, sl.mass, sl.radius, sl.id, sl.color, sl.deleted, sl.accelerationX, sl.accelerationY,
                     zeroArray);
         }
-        System.out.println("main3");
+
+        // Global Stats
+        if (isConcurrentExecution() && doneMIters(iterationCounter)) {
+            synchronized (this) {
+                if (finishedThreads < properties.getNumberOfThreads()) {
+                    try {
+                        wait();
+                    } catch (InterruptedException e) {}
+                    finishedThreads=0;
+                }
+            }
+
+            System.out.println("[" + iterationCounter + "] Global Statistics [" + String.format("%04d",0) + "-" + String.format("%04d",properties.getNumberOfObjects()) + "] " +
+                    " EvalPart: " + globalStats.getEvalPart() +
+                    "\tFussPart: " + globalStats.getMergedPart() +
+                    "\tPartLoad: " + globalStats.getPartLoad() + "(Desb: " + "ALGO" + ")" +
+                    "\tCpuLoad: " + String.format("%.3f", globalStats.getComputTime() * 10e-9) + "(Desb: " + "ALGO" + ")");
+            globalStatsSem.release(properties.getNumberOfThreads());
+        }
+    }
+
+    public boolean doneMIters(long iter) {
+        return iter % properties.getMforStats()==0;
+    }
+
+    private boolean isConcurrentExecution() {
+        return !GPU.equals(simulationLogic.getExecutionMode()) && properties.getNumberOfThreads() > 1;
     }
 
     public void initArrays(List<SimulationObject> initialObjects) {
@@ -146,12 +175,13 @@ public class SimulationFloat extends SimulationAP implements Simulation {
         }
     }
 
-    public void startThreadRoutine(){
+    public void startThreadRoutine() {
         int numThreads = properties.getNumberOfThreads();
-        long numIters = properties.getNumberOfIterations();
-        boolean isInfitineSim = properties.isInfiniteSimulation();
-        int particles = simulationLogic.positionX.length;
+        long numIters = properties.isInfiniteSimulation() ? 0 : properties.getNumberOfIterations();
+        int M = properties.getMforStats();
+        globalStats = new Statistics();
 
+        int particles = simulationLogic.positionX.length;
         threads = new Thread[numThreads];
         runnables = new StartThreadRoutineRunFloat[numThreads];
 
@@ -162,7 +192,8 @@ public class SimulationFloat extends SimulationAP implements Simulation {
             currentJob = work / remainingThreads;
             int first = firstNonAssigned, last = firstNonAssigned + currentJob;
 
-            runnables[i] = new StartThreadRoutineRunFloat(numThreads, numIters, isInfitineSim, simulationLogic, collisionCheckKernel, first, last);
+
+            runnables[i] = new StartThreadRoutineRunFloat(i, first, last, this);
             threads[i] = new Thread(runnables[i]);
             threads[i].start();
 
@@ -174,7 +205,7 @@ public class SimulationFloat extends SimulationAP implements Simulation {
 
     private void joinThreads() {
         int numThreads = properties.getNumberOfThreads();
-        for (int i = 0; i < numThreads ; i++) {
+        for (int i = 0; i < numThreads; i++) {
             try {
                 threads[i].join();
             } catch (InterruptedException e) {
@@ -271,7 +302,8 @@ public class SimulationFloat extends SimulationAP implements Simulation {
             }
         }
 
-        joinThreads();
+        if (!GPU.equals(simulationLogic.getExecutionMode()) && properties.getNumberOfThreads() > 1)
+            joinThreads();
         info(logger, "End of simulation. Time: " + nanoToHumanReadable(endTime - startTime));
     }
 
@@ -365,5 +397,13 @@ public class SimulationFloat extends SimulationAP implements Simulation {
 
     public SimulationAP getCpuSimulation() {
         return cpuSimulation;
+    }
+
+    public SimulationLogicFloat getSimulationLogicFloat() {
+        return simulationLogic;
+    }
+
+    public CollisionCheckFloat getCollisionCheckKernel() {
+        return collisionCheckKernel;
     }
 }

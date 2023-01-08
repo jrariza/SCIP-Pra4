@@ -100,24 +100,24 @@ public class CollisionCheckFloat extends Kernel {
     }
 
     public void checkAllCollisionsThreads(int MThreads) {
-        System.out.println("main2");
         // Notify threads to start checkCollisions
         collisionsSem.release(MThreads);
 
         // Wait for all threads to finish
         lock.lock();
-        System.out.println("main in lock");
         try {
             if (finishedThreads < MThreads)
                 finishedCollisions.await();
+            finishedThreads = 0;
         } catch (InterruptedException e) {
         } finally {
             lock.unlock();
         }
-        finishedThreads = 0;
+
     }
 
     public void checkCollisions(int i) {
+        long mergedPart = 0;
         if (!deleted[i]) {
             boolean collision = false;
             for (int j = 0; j < n; j++) {

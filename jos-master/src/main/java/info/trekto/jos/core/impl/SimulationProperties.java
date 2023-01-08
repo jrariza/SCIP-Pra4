@@ -221,4 +221,12 @@ public class SimulationProperties {
     public int getNumberOfThreads(){
         return this.NumberOfThreads;
     }
+
+    public void setMforStats(int mforStats) {
+        MforStats = mforStats;
+    }
+
+    public int getMforStats() {
+        return MforStats;
+    }
 }

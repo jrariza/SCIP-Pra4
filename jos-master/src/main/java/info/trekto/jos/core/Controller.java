@@ -365,10 +365,10 @@ public enum Controller {
 
         // M constant for statistics
         try {
-            gui.getSpinnerThreadsNumber().commitEdit();
+            gui.getSpinnerMforStats().commitEdit();
         } catch (java.text.ParseException e) {
         }
-        properties.setNumberOfThreads((Integer) gui.getSpinnerThreadsNumber().getValue());
+        properties.setMforStats((Integer) gui.getSpinnerMforStats().getValue());
 
     }
 

@@ -328,6 +328,22 @@
                   <foreground color="-15217733"/>
                 </properties>
               </component>
+              <component id="b22a4" class="javax.swing.JLabel">
+                <constraints>
+                  <grid row="4" column="6" row-span="1" col-span="1" vsize-policy="0" hsize-policy="0" anchor="8" fill="0" indent="0" use-parent-layout="false"/>
+                  <gridbag weightx="0.0" weighty="0.0"/>
+                </constraints>
+                <properties>
+                  <text value="M constant (Stats)"/>
+                </properties>
+              </component>
+              <component id="72dda" class="javax.swing.JSpinner" binding="spinnerMforStats">
+                <constraints>
+                  <grid row="4" column="7" row-span="1" col-span="1" vsize-policy="0" hsize-policy="6" anchor="8" fill="1" indent="0" use-parent-layout="false"/>
+                  <gridbag weightx="0.0" weighty="0.0"/>
+                </constraints>
+                <properties/>
+              </component>
             </children>
           </grid>
           <component id="478cb" class="javax.swing.JCheckBox" binding="saveToFileCheckBox" default-binding="true">

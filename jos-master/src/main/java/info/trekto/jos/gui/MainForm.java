@@ -101,6 +101,8 @@ public class MainForm {
     private List<Component> savingToFileComponents;
     private String cpuGpuThresholdMessage;
 
+    private JSpinner spinnerMforStats;
+
     public void init() {
         precisionTextField.addActionListener(actionEvent -> C.precisionTextFieldEvent());
         initialObjectsTable.setModel(new InitialObjectsTableModelAndListener());
@@ -114,6 +116,14 @@ public class MainForm {
             spinnerThreadsNumber.setModel(new SpinnerNumberModel(1, 1, 32,1));
             spinnerThreadsNumber.setValue(1);
             JSpinner.DefaultEditor spinnerEditor = (JSpinner.DefaultEditor) spinnerThreadsNumber.getEditor();
+            spinnerEditor.getTextField().setHorizontalAlignment(JTextField.LEFT);
+            spinnerEditor.getTextField().setForeground(new Color(23,203,187));
+        }
+
+        {
+            spinnerMforStats.setModel(new SpinnerNumberModel(25, 1, 500,1));
+            spinnerMforStats.setValue(25);
+            JSpinner.DefaultEditor spinnerEditor = (JSpinner.DefaultEditor) spinnerMforStats.getEditor();
             spinnerEditor.getTextField().setHorizontalAlignment(JTextField.LEFT);
             spinnerEditor.getTextField().setForeground(new Color(23,203,187));
         }
@@ -167,7 +177,7 @@ public class MainForm {
                 initialObjectsTable, initialObjectsPanel, generateObjectsButton, numberTypeComboBox, precisionTextField,
                 precisionTextField, executionModeLabel, executionModeComboBox, cpuGpuThresholdLabel, cpuGpuThresholdField,
                 cpuGpuThresholdLabel2, detectCpuGpuThresholdButton, bounceFromScreenBordersCheckBox, mergeObjectsWhenCollideCheckBox,
-                corLabel, corTextField, spinnerThreadsNumber);
+                corLabel, corTextField, spinnerThreadsNumber, spinnerMforStats);
 
         playingComponents = Arrays.asList(playFileLabel, playFromLabel, browsePlayingFileButton, playButton);
 
@@ -547,6 +557,10 @@ public class MainForm {
 
     public JSpinner getSpinnerThreadsNumber(){
         return spinnerThreadsNumber;
+    }
+
+    public JSpinner getSpinnerMforStats(){
+        return spinnerMforStats;
     }
 
     {
