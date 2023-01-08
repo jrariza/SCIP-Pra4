@@ -2,6 +2,7 @@ package info.trekto.jos.core.impl.single_precision;
 
 import com.aparapi.Kernel;
 import info.trekto.jos.core.SimulationLogic;
+import info.trekto.jos.core.impl.ConditionVar;
 import info.trekto.jos.core.model.SimulationObject;
 import info.trekto.jos.core.model.impl.TripleNumber;
 import info.trekto.jos.core.numbers.New;
@@ -51,7 +52,7 @@ public class SimulationLogicFloat extends Kernel implements SimulationLogic {
     private final float coefficientOfRestitution;
 
     public Semaphore calcValuesSem;
-    public int finishedThreads;
+    public ConditionVar calcCount;
 
     public SimulationLogicFloat(int numberOfObjects, float secondsPerIteration, int screenWidth, int screenHeight, boolean mergeOnCollision,
                                 float coefficientOfRestitution) {
@@ -88,7 +89,7 @@ public class SimulationLogicFloat extends Kernel implements SimulationLogic {
         this.coefficientOfRestitution = coefficientOfRestitution;
 
         this.calcValuesSem = new Semaphore(0);
-        this.finishedThreads = 0;
+        this.calcCount = new ConditionVar();
     }
 
     @Override
@@ -164,19 +165,27 @@ public class SimulationLogicFloat extends Kernel implements SimulationLogic {
             calculateNewValues(i);
     }
 
+    public int getCurrentParticles() {
+        int count = 0;
+        for (int i = 0; i < positionX.length; i++)
+            if (!deleted[i])
+                count++;
+        return count;
+    }
+
     public void calculateAllNewValuesThreads(int MThreads) {
         // Notify threads to start calculateAllNewValues
         calcValuesSem.release(MThreads);
 
         // Wait for all threads to finish
-        synchronized (this) {
-            while (finishedThreads < MThreads) {
+        synchronized (calcCount) {
+            while (calcCount.finishedThreads < MThreads) {
                 try {
-                    wait();
+                    calcCount.wait();
                 } catch (InterruptedException e) {
                 }
             }
-            finishedThreads = 0;
+            calcCount.finishedThreads = 0;
         }
 
 

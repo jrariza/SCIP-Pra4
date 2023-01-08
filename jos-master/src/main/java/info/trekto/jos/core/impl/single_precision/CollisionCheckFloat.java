@@ -1,14 +1,13 @@
 package info.trekto.jos.core.impl.single_precision;
 
 import com.aparapi.Kernel;
+import info.trekto.jos.core.impl.ConditionVar;
 
 import java.util.Arrays;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
-
-import static java.lang.System.exit;
 
 public class CollisionCheckFloat extends Kernel {
     public final boolean[] collisions;
@@ -20,9 +19,9 @@ public class CollisionCheckFloat extends Kernel {
     public final boolean[] deleted;
 
     public Semaphore collisionsSem;
-    public int finishedThreads;
-    public Lock lock;
+    public Lock collLock;
     public Condition finishedCollisions;
+    public ConditionVar collCount;
 
     public CollisionCheckFloat(int n, float[] positionX, float[] positionY, float[] radius, boolean[] deleted) {
         this.n = n;
@@ -34,9 +33,9 @@ public class CollisionCheckFloat extends Kernel {
         this.deleted = deleted;
 
         collisionsSem = new Semaphore(0);
-        finishedThreads = 0;
-        lock = new ReentrantLock();
-        finishedCollisions = lock.newCondition();
+        collLock = new ReentrantLock();
+        finishedCollisions = collLock.newCondition();
+        collCount = new ConditionVar();
     }
 
     public void prepare() {
@@ -104,14 +103,14 @@ public class CollisionCheckFloat extends Kernel {
         collisionsSem.release(MThreads);
 
         // Wait for all threads to finish
-        lock.lock();
+        collLock.lock();
         try {
-            if (finishedThreads < MThreads)
+            if (collCount.finishedThreads < MThreads)
                 finishedCollisions.await();
-            finishedThreads = 0;
+            collCount.finishedThreads = 0;
         } catch (InterruptedException e) {
         } finally {
-            lock.unlock();
+            collLock.unlock();
         }
 
     }

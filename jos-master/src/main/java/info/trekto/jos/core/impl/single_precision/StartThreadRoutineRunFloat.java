@@ -1,8 +1,13 @@
 package info.trekto.jos.core.impl.single_precision;
 
+import info.trekto.jos.core.impl.ConditionVar;
 import info.trekto.jos.core.impl.Statistics;
 
 import java.util.concurrent.Semaphore;
+import java.util.concurrent.locks.Condition;
+import java.util.concurrent.locks.Lock;
+
+import static info.trekto.jos.util.Utils.nanoToHumanReadable;
 
 public class StartThreadRoutineRunFloat implements Runnable {
     private final int id;
@@ -68,36 +73,33 @@ public class StartThreadRoutineRunFloat implements Runnable {
             currentIterStats.reset();
 
             if (simulation.doneMIters(i)) {
+                simulation.partialGlobalStats.updateStats(partialStats);
+                simulation.totalGlobalStats.updateStats(partialStats);
+
+                // notify main all stats updated
+                notifyAllThreadsFinish(simulation.statsCount);
+                waitForMain(simulation.statsSem1);
+
+                // now all averages are computed
+                double avgTime = simulation.statsAvgs.avgComputTime;
+                double avgPartLoad = simulation.statsAvgs.avgPartLoad;
+                partialStats.calculateImbalances(avgTime, avgPartLoad);
+
                 totalStats.updateStats(partialStats);
-                simulation.globalStats.updateGlobalStats(partialStats);
-
-                // Notify all threads have updated globalStats
-                synchronized (simulation) {
-                    simulation.finishedThreads++;
-                    if (simulation.finishedThreads == numThreads)
-//                        simulation.globalStats.calculateAverages(numThreads);
-                    simulation.notify();
-                }
-
-                // Wait for global stats to be printed
-                try {
-                    simulation.globalStatsSem.acquire();
-                } catch (InterruptedException e) {
-                }
-
                 printPartialStats(i);
-                partialStats.reset();
-                waitAllFinish(null);
 
-                // Reset only global averages after all partial stats are printed
-                if (id == 0) simulation.globalStats.resetAverages();
+                // notify main partialSatts are printed
+                notifyAllThreadsFinish(simulation.statsCount);
+                waitForMain(simulation.statsSem2);
 
                 printTotalStats(i);
-                waitAllFinish(null);
+                partialStats.reset();
+                waitAllFinish(simulation.statsCount);
             }
         }
     }
-    private void waitForMain(Semaphore sem){
+
+    private void waitForMain(Semaphore sem) {
         // Wait for main notification to continue
         try {
             sem.acquire();
@@ -105,15 +107,27 @@ public class StartThreadRoutineRunFloat implements Runnable {
         }
     }
 
-    private void notifyAllThreadsFinish(Object lock){
+    private void notifyAllThreadsFinish(ConditionVar counter) {
         // Notifies the main thread that all threads have finished a certain task
         // When main can't continue if all threads haven't finished (ex: processCollision, print globalStats)
-        synchronized (simulation) {
-            simulation.finishedThreads++;
-            if (simulation.finishedThreads == numThreads)
-                simulation.notify();
+        synchronized (counter) {
+            counter.finishedThreads++;
+            if (counter.finishedThreads == numThreads)
+                counter.notify();
         }
     }
+
+    private void notifyAllThreadsFinishLock(Lock lock, Condition finished, ConditionVar counter) {
+        lock.lock();
+        try {
+            counter.finishedThreads++;
+            if (counter.finishedThreads == numThreads)
+                finished.signalAll();
+        } finally {
+            lock.unlock();
+        }
+    }
+
     private void waitAllFinish(Object lock) {
         // Wait for all threads to finish
         // When thread can't continue if others threads haven't finished (ex: print statistics)
@@ -139,82 +153,67 @@ public class StartThreadRoutineRunFloat implements Runnable {
     }
 
     private void printPartialStats(long iter) {
-        double avgPartLoad = simulation.globalStats.avgPartLoad, avgComputTime = simulation.globalStats.avgComputTime;
-        double partLoadImb = (partialStats.partLoad - avgPartLoad) / avgPartLoad *100;
-        double computTimeImb = (partialStats.computTime - avgComputTime) / avgComputTime*100;
-        System.out.println("[" + iter + "] M Iters Thread " + id + "  [" + String.format("%04d",first) + "-" + String.format("%04d",last) + "] Statistics:" +
-                "\tEvalPart: " + partialStats.evalPart +
-                "\tFussPart: " + partialStats.mergedPart +
-                "\tPartLoad: " + partialStats.partLoadImb + "(Desb: " + String.format("%.3f", partLoadImb) + "%)" +
-                "\tCpuLoad: " + String.format("%.3f", partialStats.computTime * 10e-9) + "(Desb: " + String.format("%.3f",computTimeImb) +"%)");
+        double partLoadImb = partialStats.partLoadImb * 100;
+        double computTimeImb = partialStats.timeImb * 100;
+        System.out.println("[" + iter + "] M Iters Thread " + id + "  [" + String.format("%04d", first) + "-" + String.format("%04d", last) + "] Statistics:" +
+                "\tEvalPart: " + String.format("%,12d",partialStats.evalPart) +
+                "\tFussPart: " + String.format("%,6d",partialStats.mergedPart) +
+                "\tPartLoad: " + String.format("%,12d",partialStats.partLoad) + " (Desb: " + String.format("%.3f", partLoadImb) + "%)" +
+                "\tCpuLoad: " + String.format("%12s",nanoToHumanReadable(partialStats.computTime)) + " (Desb: " + String.format("%.3f", computTimeImb) + "%)");
     }
 
     private void printTotalStats(long iter) {
-        System.out.println("[" + iter + "]    Total Thread " + id + "  [" + first + "-" + last + "] Statistics:" +
-                "\tEvalPart: " + totalStats.evalPart +
-                "\tFussPart: " + totalStats.mergedPart +
-                "\tPartLoad: " + totalStats.partLoad + "(Desb: " + "ALGO" + ")" +
-                "\tCpuLoad: " + String.format("%.3f", partialStats.computTime * 10e-9) + "(Desb: " + "ALGO" + ")");
+        double partLoadImb = totalStats.partLoadImb * 100;
+        double computTimeImb = totalStats.timeImb * 100;
+        System.out.println("[" + iter + "]   Total Thread " + id + "  [" + String.format("%04d",first) + "-" + String.format("%04d",last) + "] Statistics:" +
+                "\tEvalPart: " + String.format("%,12d",totalStats.evalPart) +
+                "\tFussPart: " + String.format("%,6d",totalStats.mergedPart) +
+                "\tPartLoad: " + String.format("%,12d",totalStats.partLoad) + " (Desb: " + String.format("%.3f", partLoadImb) + "%)" +
+                "\tCpuLoad: " + String.format("%12s",nanoToHumanReadable(totalStats.computTime)) + " (Desb: " + String.format("%.3f", computTimeImb) + "%)");
     }
 
     private void calculateNewValuesThread() {
-        long partLoad = 0, evalPart = 0;
-
         // Wait for notification to start calculateNewValues
-        try {
-            simulationLogic.calcValuesSem.acquire();
-            startTime = System.nanoTime();
+        waitForMain(simulationLogic.calcValuesSem);
+        startTime = System.nanoTime();
 
-            for (int j = first; j < last && !cancel && !thisThread.isInterrupted(); j++) {
-                evalPart += simulationLogic.calculateNewValues(j);
-                if (!simulationLogic.deleted[j]) partLoad++;
-            }
-        } catch (InterruptedException e) {
+        long partLoad = 0, evalPart = 0;
+        for (int j = first; j < last && !cancel && !thisThread.isInterrupted(); j++) {
+            evalPart += simulationLogic.calculateNewValues(j);
+            if (!simulationLogic.deleted[j]) partLoad++;
         }
-        // Notify all threads have finished calculateNewValues
-        synchronized (simulationLogic) {
-            simulationLogic.finishedThreads++;
-            if (simulationLogic.finishedThreads == numThreads)
-                simulationLogic.notify();
-        }
+
         finishTime = System.nanoTime();
 
-        currentIterStats.computTime+=getTimeElapsed();
-        currentIterStats.evalPart+=evalPart;
-        currentIterStats.partLoad+=partLoad;
+        // Notify all threads have finished calculateNewValues
+        notifyAllThreadsFinish(simulationLogic.calcCount);
 
+        currentIterStats.computTime += getTimeElapsed();
+        currentIterStats.evalPart += evalPart;
+        currentIterStats.partLoad += partLoad;
     }
 
     private void checkCollisionsThread() {
-        long partLoad = 0, mergedPart = 0;
-
         // Wait for notification to start checkCollisions
-        try {
-            collisionsCheck.collisionsSem.acquire();
-            startTime = System.nanoTime();
+        waitForMain(collisionsCheck.collisionsSem);
+        startTime = System.nanoTime();
 
-            for (int i = first; i < last && !cancel && !thisThread.isInterrupted(); i++) {
-                collisionsCheck.checkCollisions(i);
-                if (!collisionsCheck.deleted[i]) partLoad++;
-                if (collisionsCheck.collisions[i]) mergedPart++;
-            }
-        } catch (InterruptedException e) {
+        long partLoad = 0, mergedPart = 0;
+        for (int i = first; i < last && !cancel && !thisThread.isInterrupted(); i++) {
+            collisionsCheck.checkCollisions(i);
+            if (!collisionsCheck.deleted[i]) partLoad++;
+            if (collisionsCheck.collisions[i]) mergedPart++;
         }
 
-        // Notify all threads have finished checkCollisions
-        collisionsCheck.lock.lock();
-        try {
-            collisionsCheck.finishedThreads++;
-            if (collisionsCheck.finishedThreads == numThreads)
-                collisionsCheck.finishedCollisions.signalAll();
-        } finally {
-            collisionsCheck.lock.unlock();
-        }
         finishTime = System.nanoTime();
 
-        currentIterStats.computTime+=getTimeElapsed();
-        currentIterStats.mergedPart+=mergedPart;
-        currentIterStats.partLoad+=partLoad;
+        // Notify all threads have finished checkCollisions
+        notifyAllThreadsFinishLock(collisionsCheck.collLock,
+                collisionsCheck.finishedCollisions, collisionsCheck.collCount);
+
+        currentIterStats.computTime += getTimeElapsed();
+        currentIterStats.mergedPart += mergedPart;
+        currentIterStats.partLoad += partLoad;
     }
 
 
