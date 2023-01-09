@@ -98,7 +98,7 @@ public class CollisionCheckFloat extends Kernel {
         }
     }
 
-    public void checkAllCollisionsThreads(int MThreads) {
+    public void checkAllCollisionsThreads(int MThreads) throws InterruptedException {
         // Notify threads to start checkCollisions
         collisionsSem.release(MThreads);
 
@@ -108,7 +108,6 @@ public class CollisionCheckFloat extends Kernel {
             if (collCount.finishedThreads < MThreads)
                 finishedCollisions.await();
             collCount.finishedThreads = 0;
-        } catch (InterruptedException e) {
         } finally {
             collLock.unlock();
         }
@@ -116,7 +115,6 @@ public class CollisionCheckFloat extends Kernel {
     }
 
     public void checkCollisions(int i) {
-        long mergedPart = 0;
         if (!deleted[i]) {
             boolean collision = false;
             for (int j = 0; j < n; j++) {

@@ -1,9 +1,14 @@
 package info.trekto.jos.core.impl.double_precision;
 
 import com.aparapi.Kernel;
+import info.trekto.jos.core.impl.ConditionVar;
 import info.trekto.jos.core.impl.single_precision.CheckAllCollisionsRunFloat;
 
 import java.util.Arrays;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.locks.Condition;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
 
 import static java.lang.System.exit;
 
@@ -16,6 +21,11 @@ public class CollisionCheckDouble extends Kernel {
     public final double[] radius;
     public final boolean[] deleted;
 
+    public Semaphore collisionsSem;
+    public Lock collLock;
+    public Condition finishedCollisions;
+    public ConditionVar collCount;
+
     public CollisionCheckDouble(int n, double[] positionX, double[] positionY, double[] radius, boolean[] deleted) {
         this.n = n;
         collisionExists = new boolean[1];
@@ -24,6 +34,11 @@ public class CollisionCheckDouble extends Kernel {
         this.positionY = positionY;
         this.radius = radius;
         this.deleted = deleted;
+
+        collisionsSem = new Semaphore(0);
+        collLock = new ReentrantLock();
+        finishedCollisions = collLock.newCondition();
+        collCount = new ConditionVar();
     }
 
     public void prepare() {
@@ -86,39 +101,22 @@ public class CollisionCheckDouble extends Kernel {
         }
     }
 
-    public void checkAllCollisionsThreads(int MThreads) {
-        if (collisionExists[0]) {
-            return;
-        }
-        int particles = positionX.length;
-        Thread[] threads = new Thread[MThreads];
-        CheckAllCollisionsRunDouble[] runnables = new CheckAllCollisionsRunDouble[MThreads];
-        int remainingThreads = MThreads, work = particles, currentJob, firstNonAssigned = 0;
+    public void checkAllCollisionsThreads(int MThreads) throws InterruptedException {
+        // Notify threads to start checkCollisions
+        collisionsSem.release(MThreads);
 
-        for (int i = 0; i < MThreads; i++) {
-            currentJob = work / remainingThreads;
-            int first = firstNonAssigned, last = firstNonAssigned + currentJob;
-
-            runnables[i] = new CheckAllCollisionsRunDouble(this, first, last);
-            threads[i] = new Thread(runnables[i]);
-            threads[i].start();
-
-            work -= currentJob;
-            remainingThreads--;
-            firstNonAssigned += currentJob;
-        }
-
-        for (int i = 0; i < MThreads; i++) {
-            try {
-                threads[i].join();
-            } catch (InterruptedException e) {
-                for (int j = 0; j < MThreads; j++) runnables[j].cancel();
-                exit(-1);
-            }
+        // Wait for all threads to finish
+        collLock.lock();
+        try {
+            if (collCount.finishedThreads < MThreads)
+                finishedCollisions.await();
+            collCount.finishedThreads = 0;
+        } finally {
+            collLock.unlock();
         }
     }
 
-    public void checkCollisions(int i) {
+    public long checkCollisions(int i) {
         if (!deleted[i]) {
             for (int j = 0; j < n; j++) {
                 if (i != j && !deleted[j]) {
@@ -129,11 +127,12 @@ public class CollisionCheckDouble extends Kernel {
 
                     if (distance < radius[i] + radius[j]) {
                         collisionExists[0] = true;
-                        return;
+                        return 1;
                     }
                 }
             }
         }
+        return 0;
     }
 
 }

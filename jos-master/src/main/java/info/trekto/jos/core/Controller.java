@@ -1,6 +1,6 @@
 package info.trekto.jos.core;
 /* ---------------------------------------------------------------
-Práctica 1-2.
+Práctica 3-4.
 Código fuente :
     Controller.java, SimulationFloat.java, SimulationDouble.java,
     CalculateAllNewValuesRunDouble, CalculateAllNewValuesRunFloat,

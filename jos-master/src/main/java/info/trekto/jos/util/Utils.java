@@ -153,7 +153,7 @@ public class Utils {
         return (days > 0 ? String.format("%1$4s", days) + " d. " : "")
                 + (hours > 0 ? String.format("%1$2s", hours) + " h. " : "")
                 + (minutes > 0 ? String.format("%1$2s", minutes) + " m. " : "")
-                + String.format("%1$2s", seconds) + "." + milliseconds + " s.";
+                + String.format("%1$2s", seconds) + "," + milliseconds + " s.";
     }
 
     public static String calculateAverageFileSize(String numberOfObjectsString, String numberOfIterationsString, String numberTypeString,

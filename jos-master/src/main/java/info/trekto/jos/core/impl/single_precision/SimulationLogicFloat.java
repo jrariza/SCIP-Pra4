@@ -159,7 +159,6 @@ public class SimulationLogicFloat extends Kernel implements SimulationLogic {
         return evalPart;
     }
 
-
     public void calculateAllNewValues() {
         for (int i = 0; i < positionX.length; i++)
             calculateNewValues(i);
@@ -173,22 +172,28 @@ public class SimulationLogicFloat extends Kernel implements SimulationLogic {
         return count;
     }
 
-    public void calculateAllNewValuesThreads(int MThreads) {
+    public int getRangeforNPart(int first, int numPart) {
+        // Returns x that makes [first, x) interval have numPart particles
+        int i, count=0;
+        for (i = first; i < positionX.length; i++) {
+            if (!deleted[i])
+                count++;
+            if (count == numPart)
+                break;
+        }
+        return i + 1;
+    }
+
+    public void calculateAllNewValuesThreads(int MThreads) throws InterruptedException {
         // Notify threads to start calculateAllNewValues
         calcValuesSem.release(MThreads);
 
         // Wait for all threads to finish
         synchronized (calcCount) {
-            while (calcCount.finishedThreads < MThreads) {
-                try {
+            while (calcCount.finishedThreads < MThreads)
                     calcCount.wait();
-                } catch (InterruptedException e) {
-                }
-            }
             calcCount.finishedThreads = 0;
         }
-
-
     }
 
     private void bounceFromScreenBorders(int i) {

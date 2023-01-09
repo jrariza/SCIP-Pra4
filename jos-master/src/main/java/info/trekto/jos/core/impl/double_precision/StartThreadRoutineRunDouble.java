@@ -1,7 +1,10 @@
-package info.trekto.jos.core.impl.single_precision;
+package info.trekto.jos.core.impl.double_precision;
 
 import info.trekto.jos.core.impl.ConditionVar;
 import info.trekto.jos.core.impl.Statistics;
+import info.trekto.jos.core.impl.single_precision.CollisionCheckFloat;
+import info.trekto.jos.core.impl.single_precision.SimulationFloat;
+import info.trekto.jos.core.impl.single_precision.SimulationLogicFloat;
 
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.locks.Condition;
@@ -9,15 +12,15 @@ import java.util.concurrent.locks.Lock;
 
 import static info.trekto.jos.util.Utils.nanoToHumanReadable;
 
-public class StartThreadRoutineRunFloat implements Runnable {
+public class StartThreadRoutineRunDouble implements Runnable {
     public final int id;
     private final int numThreads;
     private final long numIters;
     private final boolean isInfiniteSim;
 
-    private final SimulationFloat simulation;
-    private final SimulationLogicFloat simulationLogic;
-    private final CollisionCheckFloat collisionsCheck;
+    private final SimulationDouble simulation;
+    private final SimulationLogicDouble simulationLogic;
+    private final CollisionCheckDouble collisionsCheck;
 
     public int first;
     public int last;
@@ -36,15 +39,15 @@ public class StartThreadRoutineRunFloat implements Runnable {
     private static final ConditionVar threadCount = new ConditionVar();
 
 
-    public StartThreadRoutineRunFloat(int id, int first, int last, int numPart, SimulationFloat simFloat) {
+    public StartThreadRoutineRunDouble(int id, int first, int last, int numPart, SimulationDouble simDouble) {
         this.id = id;
-        this.numThreads = simFloat.getProperties().getNumberOfThreads();
-        this.numIters = simFloat.getProperties().getNumberOfIterations();
+        this.numThreads = simDouble.getProperties().getNumberOfThreads();
+        this.numIters = simDouble.getProperties().getNumberOfIterations();
         this.isInfiniteSim = numIters == 0;
 
-        this.simulation = simFloat;
-        this.simulationLogic = simFloat.getSimulationLogicFloat();
-        this.collisionsCheck = simFloat.getCollisionCheckKernel();
+        this.simulation = simDouble;
+        this.simulationLogic = simDouble.getSimulationLogicDouble();
+        this.collisionsCheck = simDouble.getCollisionCheckKernel();
 
         this.first = first;
         this.last = last;
@@ -79,7 +82,6 @@ public class StartThreadRoutineRunFloat implements Runnable {
     }
 
     private void doIteration(long i) throws InterruptedException {
-
         calculateNewValuesThread();
         checkCollisionsThread();
 
@@ -110,7 +112,6 @@ public class StartThreadRoutineRunFloat implements Runnable {
             partialStats.reset();
             waitAllFinish(threadCount);
         }
-
     }
 
     private void waitForMain(Semaphore sem) throws InterruptedException {
@@ -124,7 +125,7 @@ public class StartThreadRoutineRunFloat implements Runnable {
         synchronized (counter) {
             counter.finishedThreads++;
             if (counter.finishedThreads == numThreads)
-                counter.notifyAll();
+                counter.notify();
         }
     }
 
@@ -163,21 +164,21 @@ public class StartThreadRoutineRunFloat implements Runnable {
     private void printPartialStats(long iter) {
         double partLoadImb = partialStats.partLoadImb * 100;
         double computTimeImb = partialStats.timeImb * 100;
-        System.out.println("[" + iter + "] M Iters Thread " + id + "  [" + String.format("%04d", first) + "-" + String.format("%04d", last) + "] (" + String.format("%5d", numPart) + "part)" +
-                "\tEvalPart: " + String.format("%,12d", partialStats.evalPart) +
-                "\tFussPart: " + String.format("%,6d", partialStats.mergedPart) +
-                "\tPartLoad: " + String.format("%,12d", partialStats.partLoad) + " (Desb: " + String.format("%.3f", partLoadImb) + "%)" +
-                "\tCpuLoad: " + String.format("%12s", nanoToHumanReadable(partialStats.computTime)) + " (Desb: " + String.format("%.3f", computTimeImb) + "%)");
+        System.out.println("[" + iter + "] M Iters Thread " + id + "  [" + String.format("%04d", first) + "-" + String.format("%04d", last) + "] (" + String.format("%5d", numPart) + "part)"+
+                "\tEvalPart: " + String.format("%,12d",partialStats.evalPart) +
+                "\tFussPart: " + String.format("%,6d",partialStats.mergedPart) +
+                "\tPartLoad: " + String.format("%,12d",partialStats.partLoad) + " (Desb: " + String.format("%.3f", partLoadImb) + "%)" +
+                "\tCpuLoad: " + String.format("%12s",nanoToHumanReadable(partialStats.computTime)) + " (Desb: " + String.format("%.3f", computTimeImb) + "%)");
     }
 
     private void printTotalStats(long iter) {
         double partLoadImb = totalStats.partLoadImb * 100;
         double computTimeImb = totalStats.timeImb * 100;
-        System.out.println("[" + iter + "]   Total Thread " + id + "  [" + String.format("%04d", first) + "-" + String.format("%04d", last) + "] (" + String.format("%5d", numPart) + "part)" +
-                "\tEvalPart: " + String.format("%,12d", totalStats.evalPart) +
-                "\tFussPart: " + String.format("%,6d", totalStats.mergedPart) +
-                "\tPartLoad: " + String.format("%,12d", totalStats.partLoad) + " (Desb: " + String.format("%.3f", partLoadImb) + "%)" +
-                "\tCpuLoad: " + String.format("%12s", nanoToHumanReadable(totalStats.computTime)) + " (Desb: " + String.format("%.3f", computTimeImb) + "%)");
+        System.out.println("[" + iter + "]   Total Thread " + id + "  [" + String.format("%04d",first) + "-" + String.format("%04d",last) + "] (" + String.format("%5d", numPart) + "part)"+
+                "\tEvalPart: " + String.format("%,12d",totalStats.evalPart) +
+                "\tFussPart: " + String.format("%,6d",totalStats.mergedPart) +
+                "\tPartLoad: " + String.format("%,12d",totalStats.partLoad) + " (Desb: " + String.format("%.3f", partLoadImb) + "%)" +
+                "\tCpuLoad: " + String.format("%12s",nanoToHumanReadable(totalStats.computTime)) + " (Desb: " + String.format("%.3f", computTimeImb) + "%)");
     }
 
     private void calculateNewValuesThread() throws InterruptedException {
@@ -208,9 +209,8 @@ public class StartThreadRoutineRunFloat implements Runnable {
 
         long partLoad = 0, mergedPart = 0;
         for (int i = first; i < last && !cancel && !thisThread.isInterrupted(); i++) {
-            collisionsCheck.checkCollisions(i);
+            mergedPart+= collisionsCheck.checkCollisions(i);
             if (!collisionsCheck.deleted[i]) partLoad++;
-            if (collisionsCheck.collisions[i]) mergedPart++;
         }
 
         finishTime = System.nanoTime();

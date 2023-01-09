@@ -2,6 +2,7 @@ package info.trekto.jos.core.impl.double_precision;
 
 import com.aparapi.Kernel;
 import info.trekto.jos.core.SimulationLogic;
+import info.trekto.jos.core.impl.ConditionVar;
 import info.trekto.jos.core.impl.single_precision.CalculateAllNewValuesRunFloat;
 import info.trekto.jos.core.model.SimulationObject;
 import info.trekto.jos.core.model.impl.TripleNumber;
@@ -12,6 +13,7 @@ import java.util.AbstractMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.Semaphore;
 
 import static info.trekto.jos.core.numbers.NumberFactoryProxy.ZERO;
 import static java.lang.System.exit;
@@ -51,6 +53,9 @@ public class SimulationLogicDouble extends Kernel implements SimulationLogic {
     private final boolean mergeOnCollision;
     private final double coefficientOfRestitution;
 
+    public Semaphore calcValuesSem;
+    public final ConditionVar calcCount;
+
     public SimulationLogicDouble(int numberOfObjects, double secondsPerIteration, int screenWidth, int screenHeight, boolean mergeOnCollision,
                                  double coefficientOfRestitution) {
         int n = numberOfObjects;
@@ -83,6 +88,9 @@ public class SimulationLogicDouble extends Kernel implements SimulationLogic {
         this.screenHeight = screenHeight;
         this.mergeOnCollision = mergeOnCollision;
         this.coefficientOfRestitution = coefficientOfRestitution;
+
+        this.calcValuesSem = new Semaphore(0);
+        this.calcCount = new ConditionVar();
     }
 
     @Override
@@ -95,7 +103,8 @@ public class SimulationLogicDouble extends Kernel implements SimulationLogic {
      * This code is translated to OpenCL and executed on the GPU.
      * You cannot use even simple 'break' here - it is not supported by Aparapi.
      */
-    public void calculateNewValues(int i) {
+    public long calculateNewValues(int i) {
+        long evalPart = 0;
         if (!deleted[i]) {
             /* Speed is scalar, velocity is vector. Velocity = speed + direction. */
 
@@ -108,6 +117,7 @@ public class SimulationLogicDouble extends Kernel implements SimulationLogic {
             double newAccelerationX = 0;
             double newAccelerationY = 0;
             for (int j = 0; j < readOnlyPositionX.length; j++) {
+                evalPart++;
                 if (i != j && !readOnlyDeleted[j]) {
                     /* Calculate force */
                     double distance = calculateDistance(positionX[i], positionY[i], readOnlyPositionX[j], readOnlyPositionY[j]);
@@ -146,6 +156,7 @@ public class SimulationLogicDouble extends Kernel implements SimulationLogic {
                 bounceFromScreenBorders(i);
             }
         }
+        return evalPart;
     }
 
     public void calculateAllNewValues() {
@@ -153,32 +164,36 @@ public class SimulationLogicDouble extends Kernel implements SimulationLogic {
             calculateNewValues(i);
     }
 
-    public void calculateAllNewValuesThreads(int MThreads) {
-        int particles = positionX.length;
-        Thread[] threads = new Thread[MThreads];
-        CalculateAllNewValuesRunDouble[] runnables = new CalculateAllNewValuesRunDouble[MThreads];
-        int remainingThreads = MThreads, work = particles, currentJob, firstNonAssigned = 0;
+    public int getCurrentParticles() {
+        int count = 0;
+        for (int i = 0; i < positionX.length; i++)
+            if (!deleted[i])
+                count++;
+        return count;
+    }
 
-        for (int i = 0; i < MThreads; i++) {
-            currentJob = work / remainingThreads;
-            int first = firstNonAssigned, last = firstNonAssigned + currentJob;
-
-            runnables[i] = new CalculateAllNewValuesRunDouble(this, first, last);
-            threads[i] = new Thread(runnables[i]);
-            threads[i].start();
-
-            work -= currentJob;
-            remainingThreads--;
-            firstNonAssigned += currentJob;
+    public int getRangeforNPart(int first, int numPart) {
+        // Returns x that makes [first, x) interval have numPart particles
+        int i, count=0;
+        for (i = first; i < positionX.length; i++) {
+            if (!deleted[i])
+                count++;
+            if (count == numPart)
+                break;
         }
+        return i + 1;
+    }
 
-        for (int i = 0; i < MThreads; i++) {
-            try {
-                threads[i].join();
-            } catch (InterruptedException e) {
-                for (int j = 0; j < MThreads; j++) runnables[j].cancel();
-                exit(-1);
+    public void calculateAllNewValuesThreads(int MThreads) throws InterruptedException {
+        // Notify threads to start calculateAllNewValues
+        calcValuesSem.release(MThreads);
+
+        // Wait for all threads to finish
+        synchronized (calcCount) {
+            while (calcCount.finishedThreads < MThreads) {
+                calcCount.wait();
             }
+            calcCount.finishedThreads = 0;
         }
     }
 

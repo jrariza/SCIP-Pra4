@@ -40,14 +40,18 @@ public class SimulationFloat extends SimulationAP implements Simulation {
     private final SimulationAP cpuSimulation;
     private boolean executingOnCpu;
 
-    private Thread[] threads;
-    private StartThreadRoutineRunFloat[] runnables;
+    private final Thread[] threads;
+    private final StartThreadRoutineRunFloat[] runnables;
+
     public Statistics totalGlobalStats;    // accumulated stats of all iterations of all threads
     public Statistics partialGlobalStats;  // global stats of the last M iterations of all threads
     public StatsAverages statsAvgs;
+
     public Semaphore statsSem1 = new Semaphore(0);
     public Semaphore statsSem2 = new Semaphore(0);
     public final ConditionVar statsCount = new ConditionVar();
+
+    public Thread thisThread;
 
     public SimulationFloat(SimulationProperties properties, SimulationAP cpuSimulation) {
         super(properties);
@@ -77,6 +81,10 @@ public class SimulationFloat extends SimulationAP implements Simulation {
         totalGlobalStats = new Statistics();
         partialGlobalStats = new Statistics();
         statsAvgs = new StatsAverages(properties.getNumberOfThreads());
+
+        thisThread = Thread.currentThread();
+        threads = new Thread[properties.getNumberOfThreads()];
+        runnables = new StartThreadRoutineRunFloat[properties.getNumberOfThreads()];
     }
 
 
@@ -99,7 +107,12 @@ public class SimulationFloat extends SimulationAP implements Simulation {
         } else if (properties.getNumberOfThreads() == 1) {
             simulationLogic.calculateAllNewValues();
         } else {
-            simulationLogic.calculateAllNewValuesThreads(properties.getNumberOfThreads());
+            try {
+                if(areThreadsInterrumpted()) cancelThreads();
+                simulationLogic.calculateAllNewValuesThreads(properties.getNumberOfThreads());
+            } catch (InterruptedException e) {
+                cancelThreads();
+            }
         }
         if (iterationCounter == 1) {
             if (!GPU.equals(simulationLogic.getExecutionMode())) {
@@ -115,8 +128,14 @@ public class SimulationFloat extends SimulationAP implements Simulation {
             collisionCheckKernel.execute(collisionCheckRange);
         else if (properties.getNumberOfThreads() == 1)
             collisionCheckKernel.checkAllCollisions();
-        else
-            collisionCheckKernel.checkAllCollisionsThreads(properties.getNumberOfThreads());
+        else {
+            try {
+                if(areThreadsInterrumpted()) cancelThreads();
+                collisionCheckKernel.checkAllCollisionsThreads(properties.getNumberOfThreads());
+            } catch (InterruptedException e) {
+                cancelThreads();
+            }
+        }
         if (iterationCounter == 1) {
             if (!GPU.equals(collisionCheckKernel.getExecutionMode())) {
                 warn(logger, "Collision detection execution mode = " + collisionCheckKernel.getExecutionMode());
@@ -126,6 +145,8 @@ public class SimulationFloat extends SimulationAP implements Simulation {
         /* If collision/s exists execute sequentially on a single thread */
         if (collisionCheckKernel.collisionExists()) {
             simulationLogic.processCollisions();
+            if (isConcurrentExecution())
+                applyBalancing();
         }
 
         if (properties.isSaveToFile() && saveCurrentIterationToFile) {
@@ -137,72 +158,93 @@ public class SimulationFloat extends SimulationAP implements Simulation {
 
         /* Stats */
         if (isConcurrentExecution() && doneMIters(iterationCounter)) {
-            // Wait for all globalStats to be updated
-            waitAllThreadsMain();
-            statsAvgs.calculateAverages(partialGlobalStats.computTime, partialGlobalStats.partLoad);
-            partialGlobalStats.reset();
-            printGlobalStats(iterationCounter);
-
-            // Notify threads to continue printing
-            statsSem1.release(properties.getNumberOfThreads());
-
-            // Wait all partialStats prints before applying balancing policy
-            waitAllThreadsMain();
-            applyBalancing();
-            System.out.println();
-            statsSem2.release(properties.getNumberOfThreads());
+            try {
+                prepareMItersStats(iterationCounter);
+            } catch (InterruptedException e) {
+                cancelThreads();
+            }
         }
     }
 
-    private void applyBalancing(){
+    private boolean areThreadsInterrumpted(){
+        for (int i=0; i<threads.length; i++){
+            if(runnables[i].thisThread!=null && runnables[i].thisThread.isInterrupted() || runnables[i].cancel)
+              return true;
+        }
+        return false;
+    }
+
+    private void prepareMItersStats(long iterationCounter) throws InterruptedException {
+        if(areThreadsInterrumpted()) cancelThreads();
+        // Wait for all globalStats to be updated
+        waitAllThreadsMain();
+        statsAvgs.calculateAverages(partialGlobalStats.computTime, partialGlobalStats.partLoad);
+        partialGlobalStats.reset();
+        printGlobalStats(iterationCounter);
+
+        // Notify threads to continue printing
+        statsSem1.release(properties.getNumberOfThreads());
+
+        if(areThreadsInterrumpted()) cancelThreads();
+        // Wait all partialStats prints
+        waitAllThreadsMain();
+        System.out.println();
+        statsSem2.release(properties.getNumberOfThreads());
+    }
+
+    private void cancelThreads() {
+        for (int i = 0; i < threads.length; i++) {
+            runnables[i].cancel();
+        }
+        joinThreads();
+        exit(-1);
+    }
+
+    private void applyBalancing() {
         int numThreads = properties.getNumberOfThreads();
         int particles = simulationLogic.getCurrentParticles();
 
-        double totalImbalance=0;
-        for(int i=0; i<numThreads;i++){
-
-        }
-        int remainingThreads = numThreads, work = particles, currentJob, firstNonAssigned = 0;
+        System.out.println("part: " + particles);
+        int remainingThreads = numThreads, work = particles, currentJob, firstNonAssigned = 0, first, last;
 
         // Create threads
         for (int i = 0; i < numThreads; i++) {
             currentJob = work / remainingThreads;
-            int first = firstNonAssigned, last = firstNonAssigned + currentJob;
+            first = firstNonAssigned;
+            last = simulationLogic.getRangeforNPart(first, currentJob);
 
+            runnables[i].first = first;
+            runnables[i].last = simulationLogic.getRangeforNPart(first, currentJob);
+            runnables[i].numPart = currentJob;
 
-            runnables[i] = new StartThreadRoutineRunFloat(i, first, last, this);
-            threads[i] = new Thread(runnables[i]);
-            threads[i].start();
-
+            firstNonAssigned = last;
             work -= currentJob;
             remainingThreads--;
-            firstNonAssigned += currentJob;
         }
     }
+
     private void printGlobalStats(long iterationCounter) {
         String line = new String(new char[175]).replace("\0", "#");
 
-        System.out.println(line+"\n"+line);
-        System.out.println("[" + iterationCounter + "] Global Statistics [" + String.format("%04d",0) + "-" + String.format("%04d",properties.getNumberOfObjects()) + "] " +
-                "\t\t\t    EvalPart: " + String.format("%,12d",totalGlobalStats.evalPart) +
-                "\tFussPart: " + String.format("%,6d",totalGlobalStats.mergedPart) +
-                "\tPartLoad: " + String.format("%,12d",totalGlobalStats.partLoad) + " (Desb: " + String.format("%.3f", 0.0) + "%)" +
-                "\tCpuLoad: " + String.format("%12s",nanoToHumanReadable(totalGlobalStats.computTime)) + " (Desb: " + String.format("%.3f", 0.0) + "%)");
+        System.out.println(line + "\n" + line);
+        System.out.println("[" + iterationCounter + "] Global Statistics " + String.format("%5d", simulationLogic.getCurrentParticles()) + "part" +
+                "\t\t\t\tEvalPart: " + String.format("%,12d", totalGlobalStats.evalPart) +
+                "\tFussPart: " + String.format("%,6d", totalGlobalStats.mergedPart) +
+                "\tPartLoad: " + String.format("%,12d", totalGlobalStats.partLoad) + " (Desb: " + String.format("%.3f", 0.0) + "%)" +
+                "\tCpuLoad: " + String.format("%12s", nanoToHumanReadable(totalGlobalStats.computTime)) + " (Desb: " + String.format("%.3f", 0.0) + "%)");
     }
 
-    private void waitAllThreadsMain(){
+    private void waitAllThreadsMain() throws InterruptedException {
         synchronized (statsCount) {
             while (statsCount.finishedThreads < properties.getNumberOfThreads()) {
-                try {
-                    statsCount.wait();
-                } catch (InterruptedException e) {
-                }
+                statsCount.wait();
             }
             statsCount.finishedThreads = 0;
         }
     }
+
     public boolean doneMIters(long iter) {
-        return iter % properties.getMforStats()==0;
+        return iter % properties.getMforStats() == 0;
     }
 
     private boolean isConcurrentExecution() {
@@ -229,14 +271,9 @@ public class SimulationFloat extends SimulationAP implements Simulation {
 
     public void startThreadRoutine() {
         int numThreads = properties.getNumberOfThreads();
-        long numIters = properties.isInfiniteSimulation() ? 0 : properties.getNumberOfIterations();
-        int M = properties.getMforStats();
         totalGlobalStats = new Statistics();
 
         int particles = simulationLogic.positionX.length;
-        threads = new Thread[numThreads];
-        runnables = new StartThreadRoutineRunFloat[numThreads];
-
         int remainingThreads = numThreads, work = particles, currentJob, firstNonAssigned = 0;
 
         // Create threads
@@ -245,7 +282,7 @@ public class SimulationFloat extends SimulationAP implements Simulation {
             int first = firstNonAssigned, last = firstNonAssigned + currentJob;
 
 
-            runnables[i] = new StartThreadRoutineRunFloat(i, first, last, this);
+            runnables[i] = new StartThreadRoutineRunFloat(i, first, last, currentJob, this);
             threads[i] = new Thread(runnables[i]);
             threads[i].start();
 
@@ -260,8 +297,10 @@ public class SimulationFloat extends SimulationAP implements Simulation {
         for (int i = 0; i < numThreads; i++) {
             try {
                 threads[i].join();
+                System.out.println("Thread "+ runnables[i].id + " joined.");
             } catch (InterruptedException e) {
-                for (int j = 0; j < numThreads; j++) runnables[j].cancel();
+                System.err.println("Join Exception: " + e.getMessage());
+                e.printStackTrace();
                 exit(-1);
             }
         }
@@ -282,7 +321,7 @@ public class SimulationFloat extends SimulationAP implements Simulation {
         C.setHasToStop(false);
         try {
             //If running on CPU and more than 1 thread, create threads
-            if (!GPU.equals(simulationLogic.getExecutionMode()) && properties.getNumberOfThreads() > 1)
+            if (isConcurrentExecution())
                 startThreadRoutine();
 
             for (long i = 0; properties.isInfiniteSimulation() || i < properties.getNumberOfIterations(); i++) {
@@ -356,6 +395,7 @@ public class SimulationFloat extends SimulationAP implements Simulation {
 
         if (!GPU.equals(simulationLogic.getExecutionMode()) && properties.getNumberOfThreads() > 1)
             joinThreads();
+
         info(logger, "End of simulation. Time: " + nanoToHumanReadable(endTime - startTime));
     }
 
